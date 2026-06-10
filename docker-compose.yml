@@ -1,0 +1,92 @@
+services:
+
+  # ─── Nginx Feed Server ──────────────────────────────────────────────────────
+  feed-server:
+    image: nginx:alpine
+    container_name: nrd-feed-server
+    restart: unless-stopped
+    volumes:
+      - ./feed/output:/usr/share/nginx/html:ro
+    networks:
+      nrd-net:
+        ipv4_address: 172.28.0.10
+
+  # ─── NRD Feed Fetcher ───────────────────────────────────────────────────────
+  # Runs first: fetches domains, writes feed file, patches AdGuardHome.yaml,
+  # THEN exits. AdGuard starts after this completes.
+  feed-init:
+    build: ./feed
+    pull_policy: build
+    container_name: nrd-feed-init
+    environment:
+      WINDOW_DAYS: "10"
+      FEED_TYPES: "gtld cctld"
+      ADGUARD_USER: "admin"
+      ADGUARD_PASS: "CHANGE_ME"
+      FEED_URL: "http://172.28.0.10/nrd.adblock"
+      RUN_MODE: "init"              # init = fetch + patch config, then exit
+    volumes:
+      - ./feed/output:/app/output
+      - ./feed/cache:/app/cache
+      - ./adguard-data/conf:/app/adguard-conf   # writable by fetcher, read by adguard
+      - /etc/whoisfreaks:/secrets:ro
+    networks:
+      - nrd-net
+    depends_on:
+      - feed-server
+
+  # ─── AdGuard Home ───────────────────────────────────────────────────────────
+  # Starts AFTER feed-init completes so config is already patched.
+  adguard:
+    image: adguard/adguardhome:latest
+    container_name: adguard-home
+    restart: unless-stopped
+    ports:
+      - "53:53/tcp"
+      - "53:53/udp"
+      - "3000:3000/tcp"
+      - "80:80/tcp"
+    volumes:
+      - ./adguard-data/work:/opt/adguardhome/work
+      - ./adguard-data/conf:/opt/adguardhome/conf
+    extra_hosts:
+      - "nrd-feed-server:172.28.0.10"
+    networks:
+      - nrd-net
+    depends_on:
+      feed-init:
+        condition: service_completed_successfully
+
+  # ─── NRD Feed Fetcher (ongoing cron) ────────────────────────────────────────
+  # Starts after AdGuard is up. Runs daily cron to refresh the feed.
+  feed-fetcher:
+    build: ./feed
+    pull_policy: build
+    container_name: nrd-feed-fetcher
+    restart: unless-stopped
+    environment:
+      WINDOW_DAYS: "10"
+      FEED_TYPES: "gtld cctld"
+      CRON_SCHEDULE: "0 2 * * *"
+      ADGUARD_URL: "http://adguard:80"
+      ADGUARD_USER: "admin"
+      ADGUARD_PASS: "CHANGE_ME"
+      FEED_URL: "http://172.28.0.10/nrd.adblock"
+      RUN_MODE: "cron"              # cron = wait for adguard, then run + schedule
+    volumes:
+      - ./feed/output:/app/output
+      - ./feed/cache:/app/cache
+      - ./adguard-data/conf:/app/adguard-conf
+      - /etc/whoisfreaks:/secrets:ro
+    networks:
+      - nrd-net
+    depends_on:
+      - adguard
+      - feed-server
+
+networks:
+  nrd-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24

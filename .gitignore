@@ -1,0 +1,25 @@
+# AdGuard persistent data (generated at runtime)
+adguard-data/
+
+# Feed output and cache (generated at runtime)
+feed/output/
+feed/cache/
+
+# API key — NEVER commit this
+secrets/
+.env
+*.key
+apikey
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
